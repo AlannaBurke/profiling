@@ -2,8 +2,6 @@
 From Profiling to Optimization: A Case Study
 ============================================
 
-**Author:** Manus AI
-
 This tutorial provides a practical, end-to-end example of how to use the
 PyTorch Profiler to identify and fix a common performance bottleneck. We will
 start with a model that has a data loading issue, use the profiler to diagnose
