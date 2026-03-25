@@ -2,8 +2,6 @@
 Profiling Custom C++ and CUDA Operators
 =======================================
 
-**Author:** Manus AI
-
 This tutorial explains how to add profiling support to your custom C++ and
 CUDA operators in PyTorch. By instrumenting your custom code with the
 `record_function` API, you can gain visibility into its performance and see
