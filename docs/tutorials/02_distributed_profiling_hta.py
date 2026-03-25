@@ -2,8 +2,6 @@
 Profiling Distributed Training with Holistic Trace Analysis (HTA)
 ===============================================================
 
-**Author:** Manus AI
-
 This tutorial provides a guide to profiling distributed training jobs using the
 PyTorch Profiler and analyzing the results with Holistic Trace Analysis (HTA).
 We will cover how to collect traces from multiple ranks and how to use HTA to
