@@ -1,160 +1,170 @@
 """
-From Profiling to Optimization: A Case Study
-============================================
+Profiling Model Execution with PyTorch Profiler
+===============================================
 
-This tutorial provides a practical, end-to-end example of how to use the
-PyTorch Profiler to identify and fix a common performance bottleneck. We will
-start with a model that has a data loading issue, use the profiler to diagnose
-the problem, apply a fix, and then re-profile to verify the improvement.
+In this tutorial, we will demonstrate how to use the PyTorch Profiler to analyze
+the execution of a model, identify performance bottlenecks, and verify
+optimizations.
 
-Introduction
-------------
+We will focus on the most common use case: understanding how your model executes
+on the CPU and GPU, rather than profiling data loading. We will use the
+`torch.profiler.profile` context manager and visualize the resulting trace in
+Perfetto.
 
-The PyTorch Profiler is a powerful tool, but its output can be overwhelming
-at first. The best way to learn how to use it is to see it in action. In this
-tutorial, we will simulate a common real-world scenario: a training loop that
-is bottlenecked by data loading. We will use the profiler to pinpoint the
-issue and then demonstrate how a simple change to the `DataLoader` can lead
-to a significant performance improvement.
+1. Setup and Model Definition
+-----------------------------
 
+First, let's define a simple model. To demonstrate the profiler's capabilities,
+we will intentionally introduce a performance bottleneck: an inefficient custom
+linear layer that performs operations sequentially instead of in parallel.
 """
-
-# %%
-# 1. The Problem: A Slow Data Loading Pipeline
-# --------------------------------------------
-#
-# Let's start by creating a synthetic dataset and a simple model. We will
-# intentionally create a data loading bottleneck by using a small number of
-# workers in our `DataLoader`.
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
-import torchvision.models as models
-
-# Create a synthetic dataset
-inputs = torch.randn(1000, 3, 224, 224)
-labels = torch.randint(0, 1000, (1000,))
-dataset = TensorDataset(inputs, labels)
-
-# Create a DataLoader with a small number of workers (to simulate a bottleneck)
-data_loader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=1)
-
-# Create a simple model
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = models.resnet18().to(device)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
-
-# %%
-# 2. Profiling the Initial Code
-# -----------------------------
-#
-# Now, let's profile our training loop to see if we can identify the
-# bottleneck. We will use the `torch.profiler.profile` context manager to
-# collect performance data.
-
 import torch.profiler
 
-def train(loader):
-    for data, target in loader:
-        data, target = data.to(device), target.to(device)
-        optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, target)
-        loss.backward()
-        optimizer.step()
+class InefficientLinear(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_features, in_features))
+        self.bias = nn.Parameter(torch.randn(out_features))
+
+    def forward(self, x):
+        # INTENTIONAL BOTTLENECK:
+        # Instead of a single matrix multiplication, we do a slow loop.
+        # This will show up clearly in the profiler trace.
+        out = torch.zeros(x.size(0), self.weight.size(0), device=x.device)
+        for i in range(x.size(0)):
+            for j in range(self.weight.size(0)):
+                out[i, j] = torch.dot(x[i], self.weight[j]) + self.bias[j]
+        return out
+
+class SimpleModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            InefficientLinear(256, 128), # Our bottleneck
+            nn.ReLU(),
+            nn.Linear(128, 10)
+        )
+
+    def forward(self, x):
+        return self.features(x)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = SimpleModel().to(device)
+inputs = torch.randn(32, 128).to(device)
+
+######################################################################
+# 2. Profiling the Execution
+# --------------------------
+#
+# We use `torch.profiler.profile` to record the execution. We will configure
+# it to record both CPU and CUDA activities, capture input shapes, and record
+# the call stack to help us pinpoint the exact line of code causing the issue.
+#
+# We also use `torch.profiler.schedule` to skip the first step (warmup) and
+# record the subsequent steps.
 
 with torch.profiler.profile(
     activities=[
         torch.profiler.ProfilerActivity.CPU,
         torch.profiler.ProfilerActivity.CUDA,
     ],
-    schedule=torch.profiler.schedule(wait=1, warmup=1, active=5, repeat=1),
-    on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/resnet18_slow'),
+    schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
     record_shapes=True,
+    profile_memory=True,
     with_stack=True
 ) as prof:
-    for i, batch in enumerate(data_loader):
-        train([batch])
+    for step in range(5):
+        # We use record_function to add a label to the trace
+        with torch.profiler.record_function("model_forward"):
+            outputs = model(inputs)
         prof.step()
-        if i >= 6: # Run for a few steps
-            break
 
-# %%
-# 3. Analyzing the Trace
-# ----------------------
+######################################################################
+# 3. Analyzing the Results with `key_averages`
+# --------------------------------------------
 #
-# After running the code above, a trace file will be generated in the
-# `./log/resnet18_slow` directory. We can now load this trace into Perfetto
-# to visualize the timeline.
-#
-# When you open the trace, you will likely see a pattern like this:
-#
-# .. image:: https://i.imgur.com/2j2k3yD.png
-#    :alt: Perfetto trace showing a data loading bottleneck
-#
-# Notice the large gaps in the GPU track. During these gaps, the GPU is idle.
-# If you look at the CPU track during these times, you will see activity
-# related to the `DataLoader`. This is a classic sign of a data loading
-# bottleneck: the GPU is waiting for the CPU to load and preprocess the data.
+# We can print a summary table to get an immediate overview of where the time
+# is being spent.
 
-# %%
-# 4. The Fix: Increasing the Number of Workers
-# ---------------------------------------------
-#
-# The fix for this particular bottleneck is straightforward: we need to
-# increase the number of workers in our `DataLoader`. This will allow the
-# data to be loaded in parallel, which should keep the GPU fed with data.
+print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
-# Create a new DataLoader with more workers
-fast_data_loader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
-
-# %%
-# 5. Profiling the Optimized Code
-# -------------------------------
+######################################################################
+# The output will clearly show that `aten::dot` and the Python loop inside
+# `InefficientLinear` are taking up the vast majority of the execution time,
+# confirming our intentional bottleneck.
 #
-# Now, let's profile the training loop again with our new `DataLoader`.
+# 4. Visualizing the Trace in Perfetto
+# ------------------------------------
+#
+# For a deeper understanding, we export the trace and view it in Perfetto.
+# Perfetto is a web-based trace viewer available at https://ui.perfetto.dev.
+
+prof.export_chrome_trace("simple_model_trace.json")
+
+######################################################################
+# You can drag and drop `simple_model_trace.json` into the Perfetto UI.
+# In the trace, you will see:
+#
+# 1.  A massive block of CPU time dedicated to thousands of tiny `aten::dot`
+#     operations.
+# 2.  The GPU timeline (if running on CUDA) will show many small kernel
+#     launches with large gaps between them, indicating that the GPU is
+#     starved for work while waiting for the CPU loop.
+#
+# 5. Optimizing the Model
+# -----------------------
+#
+# Now that we have identified the bottleneck, let's fix it by replacing
+# the inefficient loop with a standard PyTorch matrix multiplication
+# (`nn.Linear`).
+
+class OptimizedModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128), # Fixed: Standard linear layer
+            nn.ReLU(),
+            nn.Linear(128, 10)
+        )
+
+    def forward(self, x):
+        return self.features(x)
+
+optimized_model = OptimizedModel().to(device)
+
+######################################################################
+# 6. Verifying the Optimization
+# -----------------------------
+#
+# Let's profile the optimized model to verify the improvement.
 
 with torch.profiler.profile(
     activities=[
         torch.profiler.ProfilerActivity.CPU,
         torch.profiler.ProfilerActivity.CUDA,
     ],
-    schedule=torch.profiler.schedule(wait=1, warmup=1, active=5, repeat=1),
-    on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/resnet18_fast'),
+    schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
     record_shapes=True,
+    profile_memory=True,
     with_stack=True
-) as prof:
-    for i, batch in enumerate(fast_data_loader):
-        train([batch])
-        prof.step()
-        if i >= 6:
-            break
+) as prof_opt:
+    for step in range(5):
+        with torch.profiler.record_function("optimized_model_forward"):
+            outputs = optimized_model(inputs)
+        prof_opt.step()
 
-# %%
-# 6. Verifying the Improvement
-# ----------------------------
-#
-# If you now load the new trace from the `./log/resnet18_fast` directory into
-# Perfetto, you should see a significant improvement. The gaps in the GPU
-# track should be much smaller, indicating that the GPU is being utilized much
-# more effectively.
-#
-# .. image:: https://i.imgur.com/v8b0g2Y.png
-#    :alt: Perfetto trace showing improved GPU utilization
-#
-# Conclusion
-# ----------
-#
-# This tutorial has demonstrated how to use the PyTorch Profiler to identify
-# and fix a common performance bottleneck. By visualizing the execution
-# timeline, we were able to quickly see that our GPU was being underutilized
-# and that the data loading pipeline was the culprit. A simple change to the
-# `DataLoader` was all it took to fix the issue and significantly improve the
-# performance of our training loop.
-#
-# This is just one example of how the PyTorch Profiler can be used to
-# optimize your models. By applying the same principles, you can diagnose and
-# fix a wide range of performance issues in your own code.
+print(prof_opt.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+prof_opt.export_chrome_trace("optimized_model_trace.json")
+
+######################################################################
+# The new summary table will show a dramatic reduction in execution time.
+# If you load `optimized_model_trace.json` into Perfetto, you will see
+# a much denser GPU timeline with large, efficient kernel executions
+# (`aten::addmm`) and very little CPU overhead.

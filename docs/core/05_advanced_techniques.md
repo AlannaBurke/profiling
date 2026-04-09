@@ -50,42 +50,4 @@ with torch.profiler.profile(...) as prof:
 
 These custom labels will appear in your Perfetto trace, making it much easier to correlate the timeline with your source code.
 
-## Memory Profiling
-
-Understanding your model's memory usage is just as important as understanding its execution time. The PyTorch Profiler provides tools for tracking memory allocations and deallocations, helping you identify memory leaks or opportunities to reduce your model's memory footprint.
-
-To enable memory profiling, set `profile_memory=True` in the `profile` context manager:
-
-```python
-with torch.profiler.profile(
-    activities=[
-        torch.profiler.ProfilerActivity.CPU,
-        torch.profiler.ProfilerActivity.CUDA,
-    ],
-    profile_memory=True,
-) as prof:
-    # ... your code ...
-```
-
-While the `export_memory_timeline` function is now deprecated, the memory information is still captured in the trace and can be analyzed. The recommended way to analyze memory usage is to use the memory snapshot APIs, which provide a more detailed view of the memory landscape. A full guide on these new APIs will be provided in a dedicated tutorial.
-
-## Profiling `torch.compile`
-
-`torch.compile` is a powerful feature that can significantly speed up your models by JIT-compiling them. However, it also introduces a new layer of abstraction that can make profiling more challenging. When you profile a compiled model, you will see a new type of event in your trace: `Torch-Compiled Region`.
-
-This event represents the execution of the compiled graph. To understand what is happening inside this region, you need to look at the detailed output of the compiler. The profiler can provide some insights, but a full analysis often requires a combination of profiling and compiler-specific debugging techniques. A dedicated tutorial will cover this topic in more detail.
-
-## Estimating Operator FLOPS
-
-The profiler can also estimate the number of floating-point operations (FLOPS) for certain operators, such as matrix multiplications and convolutions. This can be useful for understanding the computational complexity of your model and for comparing the efficiency of different implementations.
-
-To enable FLOPS estimation, set `with_flops=True` in the `profile` context manager:
-
-```python
-with torch.profiler.profile(with_flops=True) as prof:
-    # ... your code ...
-```
-
-The estimated FLOPS will be included in the `key_averages()` table.
-
-By mastering these advanced features, you can take your performance analysis skills to the next level and tackle even the most challenging optimization tasks.
+By mastering these advanced features like scheduling and custom annotations, you can take your performance analysis skills to the next level and tackle even the most challenging optimization tasks.

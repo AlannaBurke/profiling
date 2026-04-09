@@ -32,4 +32,4 @@ To help developers diagnose and address these bottlenecks, PyTorch provides a po
 
 The PyTorch Profiler is designed to be both easy to use for beginners and powerful enough for advanced users. With just a few lines of code, you can start collecting performance data and gain valuable insights into your model's behavior. The profiler can export the collected data into a standard format that can be visualized in tools like Perfetto, allowing for a detailed, interactive analysis of your model's execution timeline.
 
-In the following sections, we will take a deep dive into the architecture of the PyTorch Profiler, walk through how to use it in practice, and explore advanced techniques for performance analysis and optimization.
+In the following sections, we will walk through how to use the PyTorch Profiler in practice, and explore advanced techniques for performance analysis and optimization.

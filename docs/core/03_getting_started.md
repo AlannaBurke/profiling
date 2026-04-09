@@ -19,7 +19,7 @@ inputs = torch.randn(5, 3, 224, 224).to(device)
 
 ## 2. Using the `torch.profiler.profile` Context Manager
 
-The easiest way to use the profiler is with the `torch.profiler.profile` context manager. This context manager takes several arguments to configure the profiling session. For this example, we will profile both CPU and GPU activities and record the shapes of the operator inputs.
+The easiest way to use the profiler is with the `torch.profiler.profile` context manager. This context manager takes several arguments to configure the profiling session. For this example, we will profile both CPU and GPU activities, record the shapes of the operator inputs, and profile memory usage.
 
 ```python
 import torch.profiler
@@ -29,7 +29,9 @@ with torch.profiler.profile(
         torch.profiler.ProfilerActivity.CPU,
         torch.profiler.ProfilerActivity.CUDA,
     ],
-    record_shapes=True
+    record_shapes=True,
+    profile_memory=True,
+    with_stack=True
 ) as prof:
     with torch.profiler.record_function("model_inference"):
         model(inputs)
@@ -39,6 +41,8 @@ Let's break down what's happening here:
 
 *   We create a `profile` context and specify the `activities` we want to record. Since we have a CUDA-enabled device, we include both `ProfilerActivity.CPU` and `ProfilerActivity.CUDA`.
 *   We set `record_shapes=True` to capture the input shapes of the operators. This can be very useful for debugging and performance analysis.
+*   We set `profile_memory=True` to track tensor memory allocation and deallocation.
+*   We set `with_stack=True` to record source information (file and line number) for the ops.
 *   Inside the `profile` context, we use `record_function` to add a custom label to our model inference code. This will make it easier to find this specific block of code in the profiling results.
 
 ## 3. Analyzing the Results with `key_averages()`
